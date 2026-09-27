@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "fudan-library": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/LvDAO/fudan-library-mcp.git@v0.1.0",
+        "fudan-library-mcp"
+      ]
+    }
+  }
+}

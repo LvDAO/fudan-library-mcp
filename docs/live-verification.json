@@ -1,0 +1,51 @@
+{
+  "checked_at": "2026-09-27T12:59:39.515342+00:00",
+  "checks": [
+    {
+      "tool": "library_status",
+      "status": "ok"
+    },
+    {
+      "mode": "regular",
+      "query": "graph neural network",
+      "total": 128376,
+      "effective_query": "any,contains,graph neural network",
+      "abstracts": 2,
+      "source_url": "https://fudan-primo.hosted.exlibrisgroup.com.cn/primo-explore/search?query=any%2Ccontains%2Cgraph+neural+network&vid=fdu&tab=digital_tab&search_scope=article_scope&offset=0&lang=zh_CN&sortby=rank&pcAvailability=false&facet=tlevel%2Cinclude%2Conline_resources"
+    },
+    {
+      "mode": "fulltext",
+      "query": "graph neural network",
+      "total": 469266,
+      "effective_query": "ftext,contains,graph neural network",
+      "abstracts": 2,
+      "source_url": "https://fudan-primo.hosted.exlibrisgroup.com.cn/primo-explore/search?query=ftext%2Ccontains%2Cgraph+neural+network&vid=fdu&tab=digital_tab&search_scope=article_scope&offset=0&lang=zh_CN&sortby=rank&pcAvailability=false&facet=tlevel%2Cinclude%2Conline_resources"
+    },
+    {
+      "test": "pagination",
+      "status": "ok"
+    },
+    {
+      "test": "single_and_batch_details",
+      "status": "ok",
+      "example_title": "Predicting Drug–Target Interaction Using a Novel Graph Neural Network with 3D Structure-Embedded Graph Representation",
+      "doi": "10.1021/acs.jcim.9b00387"
+    },
+    {
+      "test": "chinese",
+      "total": 314513
+    },
+    {
+      "test": "filters",
+      "total": 14194,
+      "years": [
+        2024,
+        2024
+      ]
+    },
+    {
+      "test": "fulltext_zero_results",
+      "status": "ok"
+    }
+  ]
+}
