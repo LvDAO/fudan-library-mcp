@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 — 2026-09-27
+
+- Reject `.` and `..` record IDs to prevent path normalization outside the document endpoint.
+- Limit each HTTP response to 4 MiB and each transfer to 30 seconds; reject unexpected compression before decoding.
+- Bound the cache by both entry count and total source-response bytes (16 MiB).
+- Filter credential-bearing, local-address, malformed, and nonstandard-port document links.
+- Add security regression tests, dependency auditing, and Bandit checks to CI and releases.
+- Reduce the homepage to badges, a short introduction, and one copyable instruction for an Agent; move details into dedicated documentation.
+
 ## 0.1.0 — 2026-09-27
 
 Initial release of the Fudan Library MCP server (stdio).

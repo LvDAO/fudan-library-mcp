@@ -23,18 +23,34 @@ EXPECTED_TOOLS = {
 }
 
 
-async def verify(source: str, live: bool):
-    if Path(source).is_file():
-        source = str(Path(source).resolve())
-    uvx = shutil.which("uvx")
-    if not uvx:
-        raise RuntimeError("Install uv and make uvx available on PATH first.")
-    args = ["--no-config", "--from", source, "fudan-library-mcp"]
+async def verify(source: str | None, live: bool, checkout: str | None = None):
+    if checkout:
+        directory = Path(checkout).resolve()
+        if not (directory / "uv.lock").is_file():
+            raise ValueError("Checkout must contain uv.lock")
+        command = shutil.which("uv")
+        args = [
+            "--no-config",
+            "--directory",
+            str(directory),
+            "run",
+            "--frozen",
+            "--no-dev",
+            "fudan-library-mcp",
+        ]
+        source = str(directory)
+    else:
+        if source and Path(source).is_file():
+            source = str(Path(source).resolve())
+        command = shutil.which("uvx")
+        args = ["--no-config", "--from", source, "fudan-library-mcp"]
+    if not command:
+        raise RuntimeError("Install uv and make uv/uvx available on PATH first.")
     report = {"checked_at": datetime.now(UTC).isoformat(), "source": source}
     with tempfile.TemporaryDirectory(prefix="fudan-mcp-install-") as directory:
         completed = await asyncio.to_thread(
             subprocess.run,
-            [uvx, *args, "--version"],
+            [command, *args, "--version"],
             cwd=directory,
             env={**os.environ, "UV_PYTHON": sys.executable},
             capture_output=True,
@@ -45,7 +61,7 @@ async def verify(source: str, live: bool):
         )
         report["version"] = completed.stdout.strip()
         params = StdioServerParameters(
-            command=uvx, args=args, cwd=directory, env={"UV_PYTHON": sys.executable}
+            command=command, args=args, cwd=directory, env={"UV_PYTHON": sys.executable}
         )
         async with (
             stdio_client(params) as (read, write),
@@ -99,7 +115,9 @@ async def verify(source: str, live: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--from", dest="source", required=True, help="Wheel path or Git source URL")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--from", dest="source", help="Wheel path or Git source URL")
+    target.add_argument("--checkout", help="Source checkout to run with frozen dependencies")
     parser.add_argument("--live", action="store_true", help="Also query the real library")
     options = parser.parse_args()
-    asyncio.run(verify(options.source, options.live))
+    asyncio.run(verify(options.source, options.live, options.checkout))

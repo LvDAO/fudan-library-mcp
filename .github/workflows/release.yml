@@ -8,11 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -20,7 +18,10 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: "3.11"
-      - run: uv sync --frozen
+      - run: uv sync --frozen --group security
+      - run: uv run --frozen --group security bandit -r src
+      - run: uv export --frozen --no-dev --no-emit-project --output-file runtime-requirements.txt
+      - run: uv run --frozen --group security pip-audit -r runtime-requirements.txt --disable-pip --no-deps --require-hashes --strict
       - run: uv run --frozen ruff check src tests scripts
       - run: uv run --frozen ruff format --check src tests scripts
       - run: uv run --frozen pytest -q
@@ -31,9 +32,31 @@ jobs:
         run: |
           wheel=(dist/*.whl)
           uv run --frozen python scripts/verify_install.py --from "${wheel[0]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-dist
+          path: dist
+      - name: Verify downloaded artifact checksums
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz dist/SHA256SUMS \
             --verify-tag --generate-notes --title "Fudan Library MCP $GITHUB_REF_NAME"

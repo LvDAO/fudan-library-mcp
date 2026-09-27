@@ -54,6 +54,13 @@ class DocumentRef(BaseModel):
     record_id: str = Field(min_length=1, max_length=1000, pattern=r"^[A-Za-z0-9_.:-]+$")
     context: Literal["PC", "L"] = "PC"
 
+    @field_validator("record_id")
+    @classmethod
+    def no_dot_segments(cls, value: str) -> str:
+        if value in {".", ".."}:
+            raise ValueError("record_id 不能是路径特殊段。")
+        return value
+
 
 class EvidenceText(BaseModel):
     text: str

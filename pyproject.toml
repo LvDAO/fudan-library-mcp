@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fudan-library-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Search Fudan Library Primo, including indexed full text, through MCP"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,7 @@ fudan-library-mcp = "fudan_library_mcp.server:main"
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1"]
+security = ["pip-audit==2.10.1", "bandit==1.9.4"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fudan_library_mcp"]
@@ -44,7 +45,7 @@ packages = ["src/fudan_library_mcp"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src", "/tests", "/scripts", "/examples", "/docs", "/README.md",
-    "/LICENSE", "/CHANGELOG.md", "/pyproject.toml", "/uv.lock",
+    "/LICENSE", "/SECURITY.md", "/CHANGELOG.md", "/pyproject.toml", "/uv.lock",
 ]
 
 [tool.pytest.ini_options]

@@ -9,6 +9,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
@@ -51,6 +52,8 @@ class Settings:
     request_interval: float = 1.0
     cache_ttl: float = 300.0
     trust_env: bool = False
+    max_response_bytes: int = 4 * 1024 * 1024
+    max_cache_bytes: int = 16 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -100,10 +103,32 @@ def first(value: Any) -> str | None:
 
 
 def web_url(value: str) -> str | None:
+    # These URLs are returned as unverified data, never fetched by this server.
+    if len(value) > 8192 or re.search(r"[\s\\\x00-\x1f\x7f]", value):
+        return None
     try:
         parsed = urlsplit(value)
-        if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username:
-            return value
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in {None, 80, 443}
+        ):
+            return None
+        host = parsed.hostname.rstrip(".").lower()
+        try:
+            if not ip_address(host).is_global:
+                return None
+        except ValueError:
+            if (
+                "." not in host
+                or host.endswith((".localhost", ".local", ".internal"))
+                or not re.fullmatch(r"[a-z0-9.-]+", host)
+                or all(re.fullmatch(r"(?:0x[0-9a-f]+|[0-9]+)", part) for part in host.split("."))
+            ):
+                return None
+        return value
     except ValueError:
         pass
     return None
@@ -331,6 +356,7 @@ class PrimoClient:
             headers={
                 "User-Agent": "FudanLibraryMCP/0.1 (anonymous literature search)",
                 "Accept": "application/json",
+                "Accept-Encoding": "identity",
             },
         )
         self._token: str | None = None
@@ -339,9 +365,44 @@ class PrimoClient:
         self._request_lock = asyncio.Lock()
         self._last_request = 0.0
         self._cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        self._cache_bytes = 0
 
     async def aclose(self):
         await self.http.aclose()
+
+    def _drop_cache(self, key: str):
+        stored = self._cache.pop(key, None)
+        if stored:
+            self._cache_bytes -= stored[1]["size"]
+
+    async def _bounded_get(self, path: str, params: dict, token: str | None) -> httpx.Response:
+        # Bound total transfer time, including servers that drip small chunks forever.
+        async with (
+            asyncio.timeout(self.settings.timeout),
+            self.http.stream(
+                "GET",
+                path,
+                params=params,
+                headers=({"Authorization": "Bearer " + token} if token else {}),
+            ) as response,
+        ):
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise LibraryError("图书馆返回了不支持的压缩响应，已停止读取。")
+            length = response.headers.get("Content-Length", "")
+            maximum = self.settings.max_response_bytes
+            if length.isdigit() and int(length) > maximum:
+                raise LibraryError("图书馆响应超过安全大小上限，请缩小检索范围。")
+            body = bytearray()
+            async for chunk in response.aiter_bytes(chunk_size=65536):
+                if len(body) + len(chunk) > maximum:
+                    raise LibraryError("图书馆响应超过安全大小上限，请缩小检索范围。")
+                body.extend(chunk)
+            return httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                content=bytes(body),
+                request=response.request,
+            )
 
     async def _request(self, path: str, params: dict, *, token: str | None = None):
         for attempt in range(3):
@@ -351,12 +412,8 @@ class PrimoClient:
                     await asyncio.sleep(delay)
                 self._last_request = time.monotonic()
                 try:
-                    response = await self.http.get(
-                        path,
-                        params=params,
-                        headers=({"Authorization": "Bearer " + token} if token else {}),
-                    )
-                except httpx.RequestError:
+                    response = await self._bounded_get(path, params, token)
+                except (httpx.RequestError, TimeoutError):
                     if attempt < 2:
                         continue
                     raise LibraryError(
@@ -410,6 +467,8 @@ class PrimoClient:
         if stored and time.monotonic() < stored[0]:
             self._cache.move_to_end(key)
             return stored[1]["data"], stored[1]["time"]
+        if stored:
+            self._drop_cache(key)
         token = await self._guest_token()
         response = await self._request(path, params, token=token)
         if response.status_code in {401, 403}:
@@ -418,7 +477,7 @@ class PrimoClient:
         self._check_status(response)
         try:
             data = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             raise LibraryError("图书馆返回了非 JSON 页面（可能是登录或维护页面）。") from None
         if not isinstance(data, dict):
             raise LibraryError("图书馆响应格式发生变化。")
@@ -434,14 +493,17 @@ class PrimoClient:
             or isinstance(data.get("pnx"), dict)
             or isinstance(data.get("primo-view"), dict)
         )
-        if cache and cacheable:
+        size = len(response.content)
+        if cache and cacheable and size <= self.settings.max_cache_bytes:
+            self._drop_cache(key)
             self._cache[key] = (
                 time.monotonic() + self.settings.cache_ttl,
-                {"data": data, "time": timestamp},
+                {"data": data, "time": timestamp, "size": size},
             )
+            self._cache_bytes += size
             self._cache.move_to_end(key)
-            while len(self._cache) > 64:
-                self._cache.popitem(last=False)
+            while len(self._cache) > 64 or self._cache_bytes > self.settings.max_cache_bytes:
+                self._drop_cache(next(iter(self._cache)))
         return data, timestamp
 
     async def search(self, request: SearchRequest) -> SearchResult:
@@ -471,7 +533,7 @@ class PrimoClient:
                 warnings.append("有一条文献格式异常，已跳过；不能把当前列表视为完整结果。")
         if partial:
             # Parsing can reveal incomplete results even when info reports success.
-            self._cache.pop(SEARCH + json.dumps(params, sort_keys=True, ensure_ascii=False), None)
+            self._drop_cache(SEARCH + json.dumps(params, sort_keys=True, ensure_ascii=False))
         next_offset = request.offset + len(docs)
         if not docs or total is None or next_offset >= total or next_offset >= 2000:
             next_offset = None
@@ -516,7 +578,7 @@ class PrimoClient:
         try:
             document = normalize_document(data, timestamp)
         except (LibraryError, TypeError, AttributeError, ValueError):
-            self._cache.pop(path + json.dumps(params, sort_keys=True, ensure_ascii=False), None)
+            self._drop_cache(path + json.dumps(params, sort_keys=True, ensure_ascii=False))
             raise LibraryError("图书馆文献详情格式异常，请稍后重试或打开来源页面。") from None
         if document.record_id != ref.record_id:
             document.warnings.append("上游返回了合并后的记录 ID，与请求 ID 不同。")
